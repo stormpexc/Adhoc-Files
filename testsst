@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 
 pragma solidity ^0.8.20;
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
-contract SecureStash {
+contract SecureStash is ReentrancyGuard {
     using SafeMath for uint256;
     string public Name;
     string public Symbol;
@@ -78,7 +79,7 @@ contract SecureStash {
     bool public isPrivateSaleActive;
     bool public isPublicSaleActive;
     // State variable used as a reentrancy guard
-    bool private _locked;
+    //bool private _locked;
 
     uint256 public seedSaleRate;
     uint256 public privateSaleRate;
@@ -176,7 +177,7 @@ contract SecureStash {
         isPrivateSaleActive = false;
         isPublicSaleActive = false;
 
-        _locked = false;
+        //_locked = false;
     }
 
     // Modifier to check if the seed sale is active
@@ -196,7 +197,7 @@ contract SecureStash {
         require(isPublicSaleActive, "Public Sale is not active");
         _;
     }
-
+/*
     // Modifier to be used as a reentrancy guard
     modifier noReentrancy() {
         require(!_locked, "Reentrant call");
@@ -204,7 +205,7 @@ contract SecureStash {
         _;
         _locked = false;
     }
-
+*/
     // Function to activate the seed sale
     function activateSeedSale(uint256 rate) public {
         require(msg.sender == owner, "Only the owner can activate the seed sale");
@@ -246,7 +247,7 @@ contract SecureStash {
         emit TokensBurned(msg.sender, amount);
     }
 
-    function buySeedSale(uint256 amount) public payable onlyWhenSeedSaleActive noReentrancy {
+    function buySeedSale(uint256 amount) public payable onlyWhenSeedSaleActive nonReentrant {
         //require(rate == 1, "Rate should be 0.1 USD per token");
         require(msg.value == amount.mul(seedSaleRate), "Insufficient amount");
         require(amount <= totalSeedSaleBalances[address(this)], "Not enough tokens available for seed sale");
@@ -260,7 +261,7 @@ contract SecureStash {
         emit TokensBought(msg.sender, amount);                                     // Update the balances
     }
 
-    function buyPrivateSale(uint256 amount) public payable onlyWhenPrivateSaleActive noReentrancy {
+    function buyPrivateSale(uint256 amount) public payable onlyWhenPrivateSaleActive nonReentrant {
         //require(rate == 1, "Rate should be 0.1 USD per token");
         require(msg.value == amount.mul(privateSaleRate), "Insufficient amount");
         require(amount <= totalPrivateSaleBalances[address(this)], "Not enough tokens available for private sale");
@@ -274,7 +275,7 @@ contract SecureStash {
         emit TokensBought(msg.sender, amount);        
     }
 
-    function buyPublicSale(uint256 amount) public payable onlyWhenPublicSaleActive noReentrancy {
+    function buyPublicSale(uint256 amount) public payable onlyWhenPublicSaleActive nonReentrant {
         //require(rate == 5, "Rate should be 0.5 USD per token");
         require(msg.value == amount.mul(publicSaleRate), "Insufficient amount");
         require(amount <= totalPublicSaleBalances[address(this)], "Not enough tokens available for public sale");
@@ -288,7 +289,7 @@ contract SecureStash {
         emit TokensBought(msg.sender, amount);       
     }
     
-    function withdrawTokenSaleVestedTokens() public noReentrancy {
+    function withdrawTokenSaleVestedTokens() public nonReentrant {
         require(block.timestamp > lastWithdrawal[msg.sender].add(30 days), "Only one withdrawal allowed per month");
         uint256 amount = 0;
 
@@ -316,7 +317,7 @@ contract SecureStash {
         emit TokensWithdrawn(msg.sender, amount);
     }
     
-    function withdrawVolatileControlTokens() public noReentrancy {
+    function withdrawVolatileControlTokens() public nonReentrant {
         require(msg.sender == owner, "Only the owner can withdraw tokens");
         require(block.timestamp > 180 days, "Vesting period is not over");      //100% of volatile tokens vested are released after 6 months
         require (vestedVolatileControlBalances[address(this)] > 0, "No tokens to withdraw");
@@ -325,7 +326,7 @@ contract SecureStash {
         emit TokensWithdrawn(address(this), volatileControlTokens);
     }
 
-    function withdrawOtherVestedTokens() public noReentrancy {
+    function withdrawOtherVestedTokens() public nonReentrant {
         require(msg.sender == owner, "Only the owner can withdraw tokens");
         require(block.timestamp > lastWithdrawal[msg.sender].add(30 days), "Only one withdrawal allowed per month");
         require (totalVested > 0, "No tokens to withdraw");
