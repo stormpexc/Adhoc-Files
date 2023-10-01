@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 
 pragma solidity ^0.8.20;
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 contract SecureStash {
+    using SafeMath for uint256;
     string public Name;
     string public Symbol;
     uint256 public decimals;
@@ -72,6 +74,26 @@ contract SecureStash {
     mapping(address => uint256) public vestedReserveBalances;    
     mapping(address => uint256) public vestedBalances;
     
+    bool public isSeedSaleActive;
+    bool public isPrivateSaleActive;
+    bool public isPublicSaleActive;
+    // State variable used as a reentrancy guard
+    bool private _locked;
+
+    uint256 public seedSaleRate;
+    uint256 public privateSaleRate;
+    uint256 public publicSaleRate;
+
+    // Events to log the activation of sales
+    event SeedSaleActivated(uint256 timestamp);
+    event PrivateSaleActivated(uint256 timestamp);
+    event PublicSaleActivated(uint256 timestamp);
+
+    event TokensBought(address indexed buyer, uint256 amount);
+    event TokensMinted(address indexed to, uint256 amount);
+    event TokensBurned(address indexed from, uint256 amount);
+    event TokensWithdrawn(address indexed from, uint256 amount);
+
     mapping(address => uint256) public lastWithdrawal;
     uint256 public constant TOKENS_RELEASE = 30 days;
 
@@ -80,38 +102,38 @@ contract SecureStash {
         Symbol = "SST";
         owner = msg.sender;
         decimals = 18;
-        maxSupply = 100000000; // * 10 ** decimals();
+        maxSupply = 100000000; //* 10 ** decimals;
         
         // Token Allocation
-        seedSaleTokens = (maxSupply * 25) / 1000; // 2.5% of maxSupply
-        privateSaleTokens = (maxSupply * 175) / 1000; // 17.5% of maxSupply
-        publicSaleTokens = (maxSupply * 100) / 1000; // 10% of maxSupply
-        volatileControlTokens = (maxSupply * 500) / 1000; // 50% of maxSupply
-        exchangeListingTokens = (maxSupply * 100) / 1000; // 10% of maxSupply
-        ecosystemDevelopmentTokens = (maxSupply * 50) / 1000; // 5% of maxSupply
-        teamTokens = (maxSupply * 40) / 1000; // 4% of maxSupply
-        reserveTokens = (maxSupply * 10) / 1000; // 1% of maxSupply
+        seedSaleTokens = maxSupply.mul(25).div(1000);           // 2.5% of maxSupply
+        privateSaleTokens = maxSupply.mul(175).div(1000);       // 17.5% of maxSupply
+        publicSaleTokens = maxSupply.mul(100).div(1000);        // 10% of maxSupply
+        volatileControlTokens = maxSupply.mul(500).div(1000);   // 50% of maxSupply
+        exchangeListingTokens = maxSupply.mul(100).div(1000);   // 10% of maxSupply
+        ecosystemDevelopmentTokens = maxSupply.mul(50).div(1000); // 5% of maxSupply
+        teamTokens = maxSupply.mul(40).div(1000);               // 4% of maxSupply
+        reserveTokens = maxSupply.mul(10).div(1000);            // 1% of maxSupply
         
         // Distributing the initial balances. Rest of the tokens released after vesting period.
-        initialSeedSaleTokens = (seedSaleTokens * 4) / 100;         //4% of initial tokens allocated for seed sale participants
-        initialPrivateSaleTokens = (privateSaleTokens * 4) / 100;   //4% of initial tokens allocated for private sale participants
-        initialPublicSaleTokens = (publicSaleTokens * 4) / 100;     //4% of initial tokens allocated for public sale participants
-        initialExchangeListingTokens = (exchangeListingTokens * 4) / 100;   //4% of initial tokens allocated for Exchange Listings
-        initialEcosystemDevelopmentTokens = (ecosystemDevelopmentTokens * 4) / 100; //4% of initial tokens allocated for Ecosystem Development
-        initialTeamTokens = (teamTokens * 4) / 100;                 //4% of initial tokens allocated for team
-        initialReserveTokens = (reserveTokens * 4) / 100;           //4% of initial tokens allocated for reserves
+        initialSeedSaleTokens = seedSaleTokens.mul(4).div(100); //4% of initial tokens allocated for seed sale participants
+        initialPrivateSaleTokens = privateSaleTokens.mul(4).div(100); //4% of initial tokens allocated for private sale participants
+        initialPublicSaleTokens = publicSaleTokens.mul(4).div(100); //4% of initial tokens allocated for public sale participants
+        initialExchangeListingTokens = exchangeListingTokens.mul(4).div(100); //4% of initial tokens allocated for Exchange Listings
+        initialEcosystemDevelopmentTokens = ecosystemDevelopmentTokens.mul(4).div(100); //4% of initial tokens allocated for Ecosystem Development
+        initialTeamTokens = teamTokens.mul(4).div(100); //4% of initial tokens allocated for team
+        initialReserveTokens = reserveTokens.mul(4).div(100); //4% of initial tokens allocated for reserves
 
         // Amount of tokens to be vested
-        vestedSeedSaleTokens = seedSaleTokens - initialSeedSaleTokens;
-        vestedPrivateSaleTokens = privateSaleTokens - initialPrivateSaleTokens;
-        vestedPublicSaleTokens = publicSaleTokens - initialPublicSaleTokens;
-        vestedVolatileControlTokens = volatileControlTokens;         //100% of volatile tokens are vested
-        vestedExchangeListingTokens = exchangeListingTokens - initialExchangeListingTokens;
-        vestedEcosystemDevelopmentTokens = ecosystemDevelopmentTokens - initialEcosystemDevelopmentTokens;
-        vestedTeamTokens = teamTokens - initialTeamTokens;
-        vestedReserveTokens = reserveTokens - initialReserveTokens;
-        totalVested = vestedSeedSaleTokens + vestedPrivateSaleTokens + vestedPublicSaleTokens + vestedVolatileControlTokens + vestedExchangeListingTokens + vestedEcosystemDevelopmentTokens + vestedTeamTokens + vestedReserveTokens;
-
+        vestedSeedSaleTokens = seedSaleTokens.sub(initialSeedSaleTokens);
+        vestedPrivateSaleTokens = privateSaleTokens.sub(initialPrivateSaleTokens);
+        vestedPublicSaleTokens = publicSaleTokens.sub(initialPublicSaleTokens);
+        vestedVolatileControlTokens = volatileControlTokens; //100% of volatile tokens are vested
+        vestedExchangeListingTokens = exchangeListingTokens.sub(initialExchangeListingTokens);
+        vestedEcosystemDevelopmentTokens = ecosystemDevelopmentTokens.sub(initialEcosystemDevelopmentTokens);
+        vestedTeamTokens = teamTokens.sub(initialTeamTokens);
+        vestedReserveTokens = reserveTokens.sub(initialReserveTokens);
+        totalVested = vestedSeedSaleTokens.add(vestedPrivateSaleTokens).add(vestedPublicSaleTokens).add(vestedVolatileControlTokens).add(vestedExchangeListingTokens).add(vestedEcosystemDevelopmentTokens).add(vestedTeamTokens).add(vestedReserveTokens);
+    
         // Allocation of vested tokens within contract
         vestedSeedSaleBalances[address(this)] = vestedSeedSaleTokens;
         vestedPrivateSaleBalances[address(this)] = vestedPrivateSaleTokens;
@@ -124,18 +146,18 @@ contract SecureStash {
         vestedBalances[address(this)] = totalVested;
 
         // No. of vested tokens released per month
-        seedSaleMonthlyRelease = vestedSeedSaleTokens / 48;
-        privateSaleMonthlyRelease = vestedPrivateSaleTokens / 48;
-        publicSaleMonthlyRelease = vestedPublicSaleTokens / 48;
-        exchangeListingMonthlyRelease = vestedExchangeListingTokens / 48;
-        ecosystemDevelopmentMonthlyRelease = vestedEcosystemDevelopmentTokens / 48;
-        teamMonthlyRelease = vestedTeamTokens / 48;
-        reserveMonthlyRelease = vestedReserveTokens / 48;
+        seedSaleMonthlyRelease = vestedSeedSaleTokens.div(48);
+        privateSaleMonthlyRelease = vestedPrivateSaleTokens.div(48);
+        publicSaleMonthlyRelease = vestedPublicSaleTokens.div(48);
+        exchangeListingMonthlyRelease = vestedExchangeListingTokens.div(48);
+        ecosystemDevelopmentMonthlyRelease = vestedEcosystemDevelopmentTokens.div(48);
+        teamMonthlyRelease = vestedTeamTokens.div(48);
+        reserveMonthlyRelease = vestedReserveTokens.div(48);
 
         // Initial supply mapping
         totalSupply = maxSupply;
         totalMint = totalSupply;
-        circulatingSupply = totalMint - totalBurn - totalVested;
+        circulatingSupply = totalMint.sub(totalBurn).sub(totalVested);
 
         // Allocation of tokens within contract (Total Balances)
         totalSeedSaleBalances[address(this)] = seedSaleTokens;
@@ -149,111 +171,178 @@ contract SecureStash {
         teamBalances[address(this)] = initialTeamTokens;
         reserveBalances[address(this)] = initialReserveTokens;
         balances[address(this)] = circulatingSupply;
+    
+        isSeedSaleActive = false;
+        isPrivateSaleActive = false;
+        isPublicSaleActive = false;
+
+        _locked = false;
+    }
+
+    // Modifier to check if the seed sale is active
+    modifier onlyWhenSeedSaleActive() {
+        require(isSeedSaleActive, "Seed Sale is not active");
+        _;
+    }
+
+    // Modifier to check if the private sale is active
+    modifier onlyWhenPrivateSaleActive() {
+        require(isPrivateSaleActive, "Private Sale is not active");
+        _;
+    }
+
+    // Modifier to check if the public sale is active
+    modifier onlyWhenPublicSaleActive() {
+        require(isPublicSaleActive, "Public Sale is not active");
+        _;
+    }
+
+    // Modifier to be used as a reentrancy guard
+    modifier noReentrancy() {
+        require(!_locked, "Reentrant call");
+        _locked = true;
+        _;
+        _locked = false;
+    }
+
+    // Function to activate the seed sale
+    function activateSeedSale(uint256 rate) public {
+        require(msg.sender == owner, "Only the owner can activate the seed sale");
+        seedSaleRate = rate;
+        isSeedSaleActive = true;
+        emit SeedSaleActivated(block.timestamp);
+    }
+
+    // Function to activate the private sale
+    function activatePrivateSale(uint256 rate) public {
+        require(msg.sender == owner, "Only the owner can activate the private sale");
+        privateSaleRate = rate;
+        isPrivateSaleActive = true;
+        emit PrivateSaleActivated(block.timestamp);
+    }
+
+    // Function to activate the public sale
+    function activatePublicSale(uint256 rate) public {
+        require(msg.sender == owner, "Only the owner can activate the public sale");
+        publicSaleRate = rate;
+        isPublicSaleActive = true;
+        emit PublicSaleActivated(block.timestamp);
     }
 
     function mint(uint256 amount) public {
         require(msg.sender == owner, "Only the owner can mint tokens");
-        require(totalSupply + amount <= maxSupply, "Cannot exceed Maximum supply");
-        totalSupply += amount;
-        totalMint += amount;
-        balances[address(this)] += amount; //Change it to ecosystem development
+        require(totalSupply.add(amount) <= maxSupply, "Cannot exceed Maximum supply");
+        ecosystemDevelopmentBalances[address(this)] = ecosystemDevelopmentBalances[address(this)].add(amount);              //Minted tokens gets allocated to ecosytem development
+        totalSupply = totalSupply.add(amount);
+        totalMint = totalMint.add(amount);
+        emit TokensMinted(msg.sender, amount);
     }
 
     function burn(uint256 amount) public {
         require(balances[msg.sender] >= amount, "Insufficient balance");
-        balances[msg.sender] -= amount;
-        totalSupply -= amount;
-        totalBurn += amount;
+        balances[msg.sender] = balances[msg.sender].sub(amount);
+        totalSupply = totalSupply.sub(amount);
+        totalBurn = totalBurn.add(amount);
+        emit TokensBurned(msg.sender, amount);
     }
 
-    function buySeedSale(uint256 amount, uint256 rate) public payable {
-        require(rate == 1, "Rate should be 0.1 USD per token");
+    function buySeedSale(uint256 amount) public payable onlyWhenSeedSaleActive noReentrancy {
+        //require(rate == 1, "Rate should be 0.1 USD per token");
+        require(msg.value == amount.mul(seedSaleRate), "Insufficient amount");
         require(amount <= totalSeedSaleBalances[address(this)], "Not enough tokens available for seed sale");
-        uint256 initialAllocation = (amount * 4)/100;                           // Calculate the initial allocation (4% of the bought amount)
-        vestedSeedSaleBalances[msg.sender] += (amount - initialAllocation);     // Update the vested balance for the buyer
-        SeedSaleSold += amount;                                                 // Update the total sold amount
-        totalSeedSaleBalances[msg.sender] += amount;                            // Update the balances
-        totalSeedSaleBalances[address(this)] -= amount;                         // Update the balances
-        balances[msg.sender] += initialAllocation;                              // Update the balances
-        balances[address(this)] -= initialAllocation;                           // Update the balances
+        uint256 initialAllocation = amount.mul(4).div(100);                                                           // Calculate the initial allocation (4% of the bought amount)
+        vestedSeedSaleBalances[msg.sender] = vestedSeedSaleBalances[msg.sender].add(amount.sub(initialAllocation));   // Update the vested balance for the buyer
+        SeedSaleSold = SeedSaleSold.add(amount);                                                                      // Update the total sold amount
+        totalSeedSaleBalances[msg.sender] = totalSeedSaleBalances[msg.sender].add(amount);                            // Update the balances
+        totalSeedSaleBalances[address(this)] = totalSeedSaleBalances[address(this)].sub(amount);                      // Update the balances
+        balances[msg.sender] = balances[msg.sender].add(initialAllocation);                                           // Update the balances
+        balances[address(this)] = balances[address(this)].sub(initialAllocation);
+        emit TokensBought(msg.sender, amount);                                     // Update the balances
     }
 
-    function buyPrivateSale(uint256 amount, uint256 rate) public payable {
-        require(rate == 1, "Rate should be 0.1 USD per token");
+    function buyPrivateSale(uint256 amount) public payable onlyWhenPrivateSaleActive noReentrancy {
+        //require(rate == 1, "Rate should be 0.1 USD per token");
+        require(msg.value == amount.mul(privateSaleRate), "Insufficient amount");
         require(amount <= totalPrivateSaleBalances[address(this)], "Not enough tokens available for private sale");
-        uint256 initialAllocation = (amount * 4)/100;
-        vestedPrivateSaleBalances[msg.sender] += (amount - initialAllocation);
-        PrivateSaleSold += amount;
-        totalPrivateSaleBalances[msg.sender] += amount;
-        totalPrivateSaleBalances[address(this)] -= amount;
-        balances[msg.sender] += initialAllocation;
-        balances[address(this)] -= initialAllocation;        
+        uint256 initialAllocation = amount.mul(4).div(100);
+        vestedPrivateSaleBalances[msg.sender] = vestedPrivateSaleBalances[msg.sender].add(amount.sub(initialAllocation));
+        PrivateSaleSold = PrivateSaleSold.add(amount);
+        totalPrivateSaleBalances[msg.sender] = totalPrivateSaleBalances[msg.sender].add(amount);
+        totalPrivateSaleBalances[address(this)] = totalPrivateSaleBalances[address(this)].sub(amount);
+        balances[msg.sender] = balances[msg.sender].add(initialAllocation);
+        balances[address(this)] = balances[address(this)].sub(initialAllocation);
+        emit TokensBought(msg.sender, amount);        
     }
 
-    function buyPublicSale(uint256 amount, uint256 rate) public payable {
-        require(rate == 5, "Rate should be 0.5 USD per token");
+    function buyPublicSale(uint256 amount) public payable onlyWhenPublicSaleActive noReentrancy {
+        //require(rate == 5, "Rate should be 0.5 USD per token");
+        require(msg.value == amount.mul(publicSaleRate), "Insufficient amount");
         require(amount <= totalPublicSaleBalances[address(this)], "Not enough tokens available for public sale");
-        uint256 initialAllocation = (amount * 4)/100;
-        vestedPublicSaleBalances[msg.sender] += (amount - initialAllocation);
-        PublicSaleSold += amount;
-        totalPublicSaleBalances[msg.sender] += amount;
-        totalPublicSaleBalances[address(this)] -= amount;
-        balances[msg.sender] += initialAllocation;
-        balances[address(this)] -= initialAllocation;        
+        uint256 initialAllocation = amount.mul(4).div(100);
+        vestedPublicSaleBalances[msg.sender] = vestedPublicSaleBalances[msg.sender].add(amount.sub(initialAllocation));
+        PublicSaleSold = PublicSaleSold.add(amount);
+        totalPublicSaleBalances[msg.sender] = totalPublicSaleBalances[msg.sender].add(amount);
+        totalPublicSaleBalances[address(this)] = totalPublicSaleBalances[address(this)].sub(amount);
+        balances[msg.sender] = balances[msg.sender].add(initialAllocation);
+        balances[address(this)] = balances[address(this)].sub(initialAllocation);
+        emit TokensBought(msg.sender, amount);       
     }
     
-    function withdrawTokenSaleVestedTokens() public {
-        require(block.timestamp > lastWithdrawal[msg.sender] + 30 days, "Only one withdrawal allowed per month");
+    function withdrawTokenSaleVestedTokens() public noReentrancy {
+        require(block.timestamp > lastWithdrawal[msg.sender].add(30 days), "Only one withdrawal allowed per month");
         uint256 amount = 0;
 
         if (vestedSeedSaleBalances[msg.sender] > 0) {
-            require(block.timestamp > lastWithdrawal[msg.sender] + TOKENS_RELEASE, "Not yet time to release next batch of tokens");
-            amount = ((totalSeedSaleBalances[msg.sender] * seedSaleMonthlyRelease) / SeedSaleSold);
-            vestedSeedSaleBalances[msg.sender] -= amount;    // update the vested seed sale balances
-            balances[address(this)] -= amount;               // update the contract balances
+            require(block.timestamp > lastWithdrawal[msg.sender].add(TOKENS_RELEASE), "Not yet time to release next batch of tokens");
+            amount = totalSeedSaleBalances[msg.sender].mul(seedSaleMonthlyRelease).div(SeedSaleSold);
+            vestedSeedSaleBalances[msg.sender] = vestedSeedSaleBalances[msg.sender].sub(amount);    // update the vested seed sale balances
+            balances[address(this)] = balances[address(this)].sub(amount);                          // update the contract balances
         } else if (vestedPrivateSaleBalances[msg.sender] > 0) {
-            require(block.timestamp > lastWithdrawal[msg.sender] + TOKENS_RELEASE, "Not yet time to release next batch of tokens");
-            amount = ((totalPrivateSaleBalances[msg.sender] * privateSaleMonthlyRelease) / PrivateSaleSold);
-            vestedPrivateSaleBalances[msg.sender] -= amount; // update the vested Private Sale Balances
-            balances[address(this)] -= amount;               // update the contract balances
+            require(block.timestamp > lastWithdrawal[msg.sender].add(TOKENS_RELEASE), "Not yet time to release next batch of tokens");
+            amount = totalPrivateSaleBalances[msg.sender].mul(privateSaleMonthlyRelease).div(PrivateSaleSold);
+            vestedPrivateSaleBalances[msg.sender] = vestedPrivateSaleBalances[msg.sender].sub(amount); // update the vested Private Sale Balances
+            balances[address(this)] = balances[address(this)].sub(amount);                             // update the contract balances
         } else if (vestedPublicSaleBalances[msg.sender] > 0) {
-            require(block.timestamp > lastWithdrawal[msg.sender] + TOKENS_RELEASE, "Not yet time to release next batch of tokens");
-            amount = ((totalPublicSaleBalances[msg.sender] * publicSaleMonthlyRelease) / PublicSaleSold);
-            vestedPublicSaleBalances[msg.sender] -= amount;  // update the vested Public Sale Balances
-            balances[address(this)] -= amount;               // update the contract balances
+            require(block.timestamp > lastWithdrawal[msg.sender].add(TOKENS_RELEASE), "Not yet time to release next batch of tokens");
+            amount = totalPublicSaleBalances[msg.sender].mul(publicSaleMonthlyRelease).div(PublicSaleSold);
+            vestedPublicSaleBalances[msg.sender] = vestedPublicSaleBalances[msg.sender].sub(amount);  // update the vested Public Sale Balances
+            balances[address(this)] = balances[address(this)].sub(amount);                            // update the contract balances
         }
 
         require(amount > 0, "No tokens to withdraw");
-        balances[msg.sender] += amount;
-        totalVested -= amount;
+        balances[msg.sender] = balances[msg.sender].add(amount);
+        totalVested = totalVested.sub(amount);
         lastWithdrawal[msg.sender] = block.timestamp;
+        emit TokensWithdrawn(msg.sender, amount);
     }
     
-    function withdrawVolatileControlTokens() public {
+    function withdrawVolatileControlTokens() public noReentrancy {
         require(msg.sender == owner, "Only the owner can withdraw tokens");
         require(block.timestamp > 180 days, "Vesting period is not over");      //100% of volatile tokens vested are released after 6 months
         require (vestedVolatileControlBalances[address(this)] > 0, "No tokens to withdraw");
-        volatileControlBalances[address(this)] += volatileControlTokens;         
-        vestedVolatileControlBalances[address(this)] -= volatileControlTokens;
+        volatileControlBalances[address(this)] = volatileControlBalances[address(this)].add(volatileControlTokens);         
+        vestedVolatileControlBalances[address(this)] = vestedVolatileControlBalances[address(this)].sub(volatileControlTokens);
+        emit TokensWithdrawn(address(this), volatileControlTokens);
     }
 
-    function withdrawOtherVestedTokens() public {
+    function withdrawOtherVestedTokens() public noReentrancy {
         require(msg.sender == owner, "Only the owner can withdraw tokens");
-        require(block.timestamp > lastWithdrawal[msg.sender] + 30 days, "Only one withdrawal allowed per month");
+        require(block.timestamp > lastWithdrawal[msg.sender].add(30 days), "Only one withdrawal allowed per month");
         require (totalVested > 0, "No tokens to withdraw");
-        vestedExchangeListingBalances[address(this)] -= exchangeListingMonthlyRelease;
-        vestedEcosystemDevelopmentBalances[address(this)] -= ecosystemDevelopmentMonthlyRelease;
-        vestedTeamBalances[address(this)] -= teamMonthlyRelease;
-        vestedReserveBalances[address(this)] -= reserveMonthlyRelease;    
-        vestedBalances[address(this)] -= (exchangeListingMonthlyRelease + ecosystemDevelopmentMonthlyRelease + teamMonthlyRelease + reserveMonthlyRelease);
+        vestedExchangeListingBalances[address(this)] = vestedExchangeListingBalances[address(this)].sub(exchangeListingMonthlyRelease);
+        vestedEcosystemDevelopmentBalances[address(this)] = vestedEcosystemDevelopmentBalances[address(this)].sub(ecosystemDevelopmentMonthlyRelease);
+        vestedTeamBalances[address(this)] = vestedTeamBalances[address(this)].sub(teamMonthlyRelease);
+        vestedReserveBalances[address(this)] = vestedReserveBalances[address(this)].sub(reserveMonthlyRelease);
+        uint256 totalMonthlyRelease = exchangeListingMonthlyRelease.add(ecosystemDevelopmentMonthlyRelease).add(teamMonthlyRelease).add(reserveMonthlyRelease);    
+        vestedBalances[address(this)] = vestedBalances[address(this)].sub(totalMonthlyRelease);
 
-        exchangeListingBalances[address(this)] += exchangeListingMonthlyRelease;         
-        ecosystemDevelopmentBalances[address(this)] += ecosystemDevelopmentMonthlyRelease;    
-        teamBalances[address(this)] += teamMonthlyRelease;
-        reserveBalances[address(this)] += reserveMonthlyRelease;
-        balances[address(this)] += (exchangeListingMonthlyRelease + ecosystemDevelopmentMonthlyRelease + teamMonthlyRelease + reserveMonthlyRelease);
+        exchangeListingBalances[address(this)] = exchangeListingBalances[address(this)].add(exchangeListingMonthlyRelease);         
+        ecosystemDevelopmentBalances[address(this)] = ecosystemDevelopmentBalances[address(this)].add(ecosystemDevelopmentMonthlyRelease);    
+        teamBalances[address(this)] = teamBalances[address(this)].add(teamMonthlyRelease);
+        reserveBalances[address(this)] = reserveBalances[address(this)].add(reserveMonthlyRelease);
+        balances[address(this)] = balances[address(this)].add(totalMonthlyRelease);
         
-        totalVested -= (exchangeListingMonthlyRelease + ecosystemDevelopmentMonthlyRelease + teamMonthlyRelease + reserveMonthlyRelease);
+        totalVested = totalVested.sub(totalMonthlyRelease);
         //lastWithdrawal[msg.sender] = block.timestamp;
     }
 }
