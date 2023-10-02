@@ -12,6 +12,7 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
     uint256 public totalVested;
     uint256 public taxRate = 5;     // 0.5% tax applied only on DEX trades
     address public deadWallet = 0x000000000000000000000000000000000000dEaD;
+    uint256 public launchTime;
     uint256 public constant maxSupply = 100000000; // * 10 ** 18; // 100M tokens with 18 decimals
     
     // Enum to define the type of sale
@@ -40,9 +41,9 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
     mapping(OtherAllocationType => OtherAllocation) public distribution;
     mapping(uint => mapping(address => uint256)) public initialSaleBalances;
     mapping(uint => mapping(address => uint256)) public totalSaleBalances;
+    mapping(uint => mapping(address => uint256)) public vestedSaleTokens;
     mapping(uint => mapping(address => uint256)) public totalVestedBalances;
     mapping(uint => mapping(address => uint256)) public otherAllocationBalances;
-    //mapping(address => uint256) vestedTokens;
 
     uint256 public constant TOKENS_RELEASE = 30 days;
 
@@ -50,16 +51,6 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
     mapping(address => bool) public isDex; // Mapping to keep track of DEX addresses
     mapping(address => uint256) public ecosystemDevelopmentBalances;    // Balances excluding vested tokens
 
-/*    mapping(address => uint256) public totalSeedSaleBalances;
-    mapping(address => uint256) public totalPrivateSaleBalances;
-    mapping(address => uint256) public totalPublicSaleBalances;
-    mapping(address => uint256) public volatileControlBalances;         // Balances excluding vested tokens
-    mapping(address => uint256) public exchangeListingBalances;         // Balances excluding vested tokens
-    mapping(address => uint256) public ecosystemDevelopmentBalances;    // Balances excluding vested tokens
-    mapping(address => uint256) public teamBalances;                    // Balances excluding vested tokens
-    mapping(address => uint256) public reserveBalances;                 // Balances excluding vested tokens
-    //mapping(address => uint256) public balances;                        // Balances excluding vested tokens
-*/
     event TokensBought(address indexed buyer, uint256 amount);
     event TokensMinted(address indexed to, uint256 amount);
     event TokensBurned(address indexed from, uint256 amount, string reason);
@@ -71,6 +62,7 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
     constructor() ERC20("Secure Stash", "SST") {
         //owner = msg.sender;
         _mint(address(this), 100000000); // * 10 ** decimals());
+        launchTime = block.timestamp;
 
         // Initializing the seedSale, privateSale, and publicSale
         sales[SaleType.Seed] = Sale({
@@ -88,7 +80,6 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
             tokens: totalSupply() * 175 / 1000,
             initialAllocation: (totalSupply() * 175 / 1000 * 4) / 100,
             vestedTokens: (totalSupply() * 175 / 1000 * 96) / 100,
-            //monthlyRelease: ((totalSupply() * 175 / 1000 * 96) / 100) / 48,
             monthlyRelease: 0,
             sold: 0,
             rate: 0,
@@ -99,7 +90,6 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
             tokens: totalSupply() * 100 / 1000,
             initialAllocation: (totalSupply() * 100 / 1000 * 4) / 100,
             vestedTokens: (totalSupply() * 100 / 1000 * 96) / 100,
-            //monthlyRelease: ((totalSupply() * 100 / 1000 * 96) / 100) / 48,
             monthlyRelease: 0,
             sold: 0,
             rate: 0,
@@ -216,12 +206,17 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
         initialSaleBalances[uint(saleType)][msg.sender] += tokensSent; // Update buyer's initial sale balances
         totalSaleBalances[uint(saleType)][msg.sender] += amount; // Update buyer's total sale balances
         totalSaleBalances[uint(saleType)][address(this)] -= amount; // Update available sale balances in contract
+        vestedSaleTokens[uint(saleType)][msg.sender] += (amount * 96) / 100;
+        totalVested += (amount * 96) / 100;
         _transfer(address(this), msg.sender, tokensSent);        // Transfer the initial allocation to the buyer
         emit TokensBought(msg.sender, amount);                   // Emit the TokensBought event
         }
     
     function withdrawSaleVestedTokens() public nonReentrant {
         uint256 totalAmount = 0;
+
+        // Calculate the number of periods since the contract launch time
+        uint256 periodsSinceLaunch = (block.timestamp - launchTime) / TOKENS_RELEASE;
 
         // Iterate over each sale type
         for (uint i = 0; i < 3; i++) {
@@ -230,12 +225,18 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
 
         // Skip the sale if it's not active or no vested tokens
         if (sale.vestedTokens == 0) continue;
-            require(block.timestamp > lastWithdrawal[msg.sender] + TOKENS_RELEASE, "Not yet time to release next batch of tokens");
-            //require(sale.vestedTokens[msg.sender] > 0, "No tokens available in vesting");
-            uint256 amount = (totalSaleBalances[uint(saleType)][msg.sender] - initialSaleBalances[uint(saleType)][msg.sender]) / 48;
-            sale.vestedTokens -= amount; // Update the total vested tokens for the sale
-            totalVestedBalances[uint(saleType)][address(this)] -= amount;
-            totalAmount += amount;
+            
+            // Calculate the number of periods since the last withdrawal
+            uint256 periodsSinceLastWithdrawal = (block.timestamp - lastWithdrawal[msg.sender]) / TOKENS_RELEASE;
+
+            // Ensure the user waits for at least one period before the next withdrawal
+            require(periodsSinceLastWithdrawal > 0, "Not yet time to release next batch of tokens");
+            require(vestedSaleTokens[uint(saleType)][msg.sender] > 0, "No tokens available in vesting");
+            uint256 amount = (totalSaleBalances[uint(saleType)][msg.sender] - initialSaleBalances[uint(saleType)][msg.sender]) * periodsSinceLaunch / 48;
+            sale.vestedTokens -= amount;                                // Update the remaining balances of sale tokens post vesting release
+            vestedSaleTokens[uint(saleType)][msg.sender] -= amount;     // Update the remaining balances of user's sale tokens post vesting release
+            totalVestedBalances[uint(saleType)][address(this)] -= amount; // Update the remaining balances in contract for sale tokens post vesting release
+            totalAmount += amount;                                      // Uptdate total tokens (all 3 sale) to be released from vesting
         }
 
         require(totalAmount > 0, "No tokens to withdraw");
@@ -247,6 +248,9 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
     function withdrawOtherVestedTokens() public onlyOwner nonReentrant {
         uint256 totalAmount = 0;
 
+        // Calculate the number of periods since the contract launch time
+        uint256 periodsSinceLaunch = (block.timestamp - launchTime) / TOKENS_RELEASE;
+
         // Iterate over each sale type
         for (uint i = 0; i < 5; i++) {
             OtherAllocationType otherAllocationType = OtherAllocationType(i);
@@ -254,16 +258,22 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
 
         // Skip the sale if it's not active or no vested tokens
         if (otherAllocation.vestedTokens == 0) continue;
+            
+            // Calculate the number of periods since the last withdrawal
+            uint256 periodsSinceLastWithdrawal = (block.timestamp - lastWithdrawal[address(this)]) / TOKENS_RELEASE;
+
+            // Ensure the user waits for at least one period before the next withdrawal
+            require(periodsSinceLastWithdrawal > 0, "Not yet time to release next batch of tokens");
             require(block.timestamp > lastWithdrawal[address(this)] + TOKENS_RELEASE, "Not yet time to release next batch of tokens");
-            uint256 amount = (otherAllocation.monthlyRelease);
-            otherAllocationBalances[uint(otherAllocationType)][address(this)] -= amount; // Update the vested sale balances
+            uint256 amount = (otherAllocation.monthlyRelease * periodsSinceLaunch);
+            otherAllocationBalances[uint(otherAllocationType)][address(this)] += amount; // Update the vested sale balances
             otherAllocation.vestedTokens -= amount; // Update the total vested tokens for the sale
             totalAmount += amount;
         }
 
         require(totalAmount > 0, "No tokens to withdraw");
         _transfer(address(this), msg.sender, totalAmount); // Transfer the total tokens from the contract to the user
-        lastWithdrawal[msg.sender] = block.timestamp;
+        lastWithdrawal[address(this)] = block.timestamp;
         emit TokensWithdrawn(address(this), totalAmount);
     }
 }
