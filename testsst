@@ -3,17 +3,17 @@
 pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract SecureStash is ERC20, ReentrancyGuard {
+contract SecureStash is ERC20, Ownable, ReentrancyGuard {
     uint256 _totalSupply = totalSupply();
     uint256 public circulatingSupply;
     uint256 public totalMint;
     uint256 public totalBurn;
     uint256 public totalVested;
     uint256 public taxRate = 5;     // 0.5% tax applied only on DEX trades
-    address public owner;
     address public deadWallet = 0x000000000000000000000000000000000000dEaD;
-    uint256 public constant maxSupply = 100000000 * 10 ** 18; // 100M tokens with 18 decimals
+    uint256 public constant maxSupply = 100000000; // * 10 ** 18; // 100M tokens with 18 decimals
     
     uint256 public seedSaleTokens;
     uint256 public privateSaleTokens;
@@ -95,7 +95,7 @@ contract SecureStash is ERC20, ReentrancyGuard {
     event TokensWithdrawn(address indexed from, uint256 amount);
 
 constructor() ERC20("Secure Stash", "SST") {
-        owner = msg.sender;
+        //owner = msg.sender;
         _mint(address(this), 100000000); // * 10 ** decimals());
         
         // Token Allocation
@@ -149,7 +149,6 @@ constructor() ERC20("Secure Stash", "SST") {
         reserveMonthlyRelease = vestedReserveTokens / 48;
 
         // Initial supply mapping
-        //totalSupply = maxSupply;
         totalMint = totalSupply();
         circulatingSupply = totalMint - totalBurn - totalVested;
 
@@ -171,12 +170,6 @@ constructor() ERC20("Secure Stash", "SST") {
         isPublicSaleActive = false;
     }
 
-    // Setting owmer as the modifier
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Only the owner can perform this operation");
-        _;
-    }
-
     // Modifier to check if the seed sale is active
     modifier onlyWhenSeedSaleActive() {
         require(isSeedSaleActive, "Seed Sale is not active");
@@ -196,7 +189,7 @@ constructor() ERC20("Secure Stash", "SST") {
     }
 
     function setTaxRates(uint256 _taxRate) external onlyOwner {
-        require(_taxRate < 5, "Tax cannot exceed 0.5%");
+        require(_taxRate <= 5, "Tax cannot exceed 0.5%");
         taxRate = _taxRate;
     }
 
@@ -210,7 +203,7 @@ constructor() ERC20("Secure Stash", "SST") {
         isDex[_dex] = false;
     }
 
-    function transfer(address recipient, uint256 amount) public override returns (bool) {
+    function transfer(address recipient, uint256 amount) public override nonReentrant returns (bool) {
         require(balances[msg.sender] >= amount, "Insufficient balance");
         uint256 tax = 0;
         if (isDex[recipient] || isDex[msg.sender]) {
