@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-
 pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
@@ -17,7 +16,7 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
     
     // Enum to define the type of sale
     enum SaleType { Seed, Private, Public }
-
+    enum OtherAllocationType { VolatileControl, ExchangeListing, EcosystemDevelopment, Team, Reserve }
     // Struct to hold sale details
     struct Sale {
         uint256 tokens;
@@ -29,23 +28,28 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
         bool isActive;
     }
 
-/*
-    // Instances of Sale struct for each type of sale
-    Sale public seedSale;
-    Sale public privateSale;
-    Sale public publicSale;
-*/
-
+    // Struct to hold rest of the token allocation details
+    struct OtherAllocation {
+        uint256 tokens;
+        uint256 initialAllocation;
+        uint256 vestedTokens;
+        uint256 monthlyRelease;
+    }
     // Mapping from SaleType to Sale
     mapping(SaleType => Sale) public sales;
+    mapping(OtherAllocationType => OtherAllocation) public distribution;
+    mapping(uint => mapping(address => uint256)) public initialSaleBalances;
     mapping(uint => mapping(address => uint256)) public totalSaleBalances;
-
+    mapping(uint => mapping(address => uint256)) public totalVestedBalances;
+    mapping(uint => mapping(address => uint256)) public otherAllocationBalances;
+    //mapping(address => uint256) vestedTokens;
 
     uint256 public constant TOKENS_RELEASE = 30 days;
 
     mapping(address => uint256) public lastWithdrawal;
     mapping(address => bool) public isDex; // Mapping to keep track of DEX addresses
     mapping(address => uint256) public ecosystemDevelopmentBalances;    // Balances excluding vested tokens
+
 /*    mapping(address => uint256) public totalSeedSaleBalances;
     mapping(address => uint256) public totalPrivateSaleBalances;
     mapping(address => uint256) public totalPublicSaleBalances;
@@ -64,16 +68,17 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
     // Event to log the activation of sales
     event SaleActivated(SaleType saleType, uint256 timestamp);
 
-constructor() ERC20("Secure Stash", "SST") {
+    constructor() ERC20("Secure Stash", "SST") {
         //owner = msg.sender;
         _mint(address(this), 100000000); // * 10 ** decimals());
 
-        // Initializing the seedSale, privateSale, and publicSale directly
+        // Initializing the seedSale, privateSale, and publicSale
         sales[SaleType.Seed] = Sale({
             tokens: totalSupply() * 25 / 1000,
             initialAllocation: (totalSupply() * 25 / 1000 * 4) / 100,
             vestedTokens: (totalSupply() * 25 / 1000 * 96) / 100,
-            monthlyRelease: ((totalSupply() * 25 / 1000 * 96) / 100) / 48,
+            //monthlyRelease: ((totalSupply() * 25 / 1000 * 96) / 100) / 48,
+            monthlyRelease: 0,
             sold: 0,
             rate: 0,
             isActive: false
@@ -83,7 +88,8 @@ constructor() ERC20("Secure Stash", "SST") {
             tokens: totalSupply() * 175 / 1000,
             initialAllocation: (totalSupply() * 175 / 1000 * 4) / 100,
             vestedTokens: (totalSupply() * 175 / 1000 * 96) / 100,
-            monthlyRelease: ((totalSupply() * 175 / 1000 * 96) / 100) / 48,
+            //monthlyRelease: ((totalSupply() * 175 / 1000 * 96) / 100) / 48,
+            monthlyRelease: 0,
             sold: 0,
             rate: 0,
             isActive: false
@@ -93,47 +99,49 @@ constructor() ERC20("Secure Stash", "SST") {
             tokens: totalSupply() * 100 / 1000,
             initialAllocation: (totalSupply() * 100 / 1000 * 4) / 100,
             vestedTokens: (totalSupply() * 100 / 1000 * 96) / 100,
-            monthlyRelease: ((totalSupply() * 100 / 1000 * 96) / 100) / 48,
+            //monthlyRelease: ((totalSupply() * 100 / 1000 * 96) / 100) / 48,
+            monthlyRelease: 0,
             sold: 0,
             rate: 0,
             isActive: false
         });
-    }
-/*    
-    // Modifier to check if the seed sale is active
-    modifier onlyWhenSeedSaleActive() {
-        require(seedSale.isActive, "Seed Sale is not active");
-        _;
-    }
+        
+        // Initializing rest of the token allocation
+        distribution[OtherAllocationType.VolatileControl] = OtherAllocation({
+            tokens: totalSupply() * 500 / 1000,
+            initialAllocation: (totalSupply() * 500 / 1000),
+            vestedTokens: 0,
+            monthlyRelease: 0
+        });
 
-    // Modifier to check if the private sale is active
-    modifier onlyWhenPrivateSaleActive() {
-        require(privateSale.isActive, "Private Sale is not active");
-        _;
-    }
+        distribution[OtherAllocationType.ExchangeListing] = OtherAllocation({
+            tokens: totalSupply() * 100 / 1000,
+            initialAllocation: (totalSupply() * 100 / 1000 * 4) / 100,
+            vestedTokens: (totalSupply() * 100 / 1000 * 96) / 100,
+            monthlyRelease: ((totalSupply() * 100 / 1000 * 96) / 100) / 48
+        });
 
-    // Modifier to check if the public sale is active
-    modifier onlyWhenPublicSaleActive() {
-        require(publicSale.isActive, "Public Sale is not active");
-        _;
-    }
+        distribution[OtherAllocationType.EcosystemDevelopment] = OtherAllocation({
+            tokens: totalSupply() * 50 / 1000,
+            initialAllocation: (totalSupply() * 50 / 1000 * 4) / 100,
+            vestedTokens: (totalSupply() * 50 / 1000 * 96) / 100,
+            monthlyRelease: ((totalSupply() * 50 / 1000 * 96) / 100) / 48
+        });
 
-    // Function to activate a sale
-    function activateSale(SaleType saleType, uint256 rate) public onlyOwner {
-        Sale storage sale = getSale(saleType);
-        sale.rate = rate;
-        sale.isActive = true;
-        emit SaleActivated(saleType, block.timestamp);
-    }
+        distribution[OtherAllocationType.Team] = OtherAllocation({
+            tokens: totalSupply() * 40 / 1000,
+            initialAllocation: (totalSupply() * 40 / 1000 * 4) / 100,
+            vestedTokens: (totalSupply() * 40 / 1000 * 96) / 100,
+            monthlyRelease: ((totalSupply() * 40 / 1000 * 96) / 100) / 48
+        });
 
-    // Function to get a sale based on SaleType
-    function getSale(SaleType saleType) internal view returns (Sale storage) {
-        if (saleType == SaleType.Seed) return seedSale;
-        if (saleType == SaleType.Private) return privateSale;
-        if (saleType == SaleType.Public) return publicSale;
-        revert("Invalid sale type");
+        distribution[OtherAllocationType.Reserve] = OtherAllocation({
+            tokens: totalSupply() * 10 / 1000,
+            initialAllocation: (totalSupply() * 10 / 1000 * 4) / 100,
+            vestedTokens: (totalSupply() * 10 / 1000 * 96) / 100,
+            monthlyRelease: ((totalSupply() * 10 / 1000 * 96) / 100) / 48
+        });
     }
-*/
 
     // Modifier to check if the sale is active
     modifier onlyWhenSaleActive(SaleType saleType) {
@@ -201,61 +209,61 @@ constructor() ERC20("Secure Stash", "SST") {
         Sale storage sale = sales[saleType];                     // Access the sale from the mapping based on SaleType
         require(msg.value == amount * sales[saleType].rate, "Insufficient amount");
         require(amount <= sale.tokens, "Not enough tokens available for sale");
-        uint256 tokensSent = (amount * sale.initialAllocation);  // Initial sale tokens sent
+        
+        uint256 tokensSent = (amount * 4) / 100;  // Initial sale tokens sent
         sale.sold += amount;                                     // Update the total sold amount
         sale.tokens -= amount;                                   // Update available sale total balances
-        sale.initialAllocation -= tokensSent;                    // Update available sale initial balances
+        initialSaleBalances[uint(saleType)][msg.sender] += tokensSent; // Update buyer's initial sale balances
         totalSaleBalances[uint(saleType)][msg.sender] += amount; // Update buyer's total sale balances
         totalSaleBalances[uint(saleType)][address(this)] -= amount; // Update available sale balances in contract
         _transfer(address(this), msg.sender, tokensSent);        // Transfer the initial allocation to the buyer
         emit TokensBought(msg.sender, amount);                   // Emit the TokensBought event
         }
+    
+    function withdrawSaleVestedTokens() public nonReentrant {
+        uint256 totalAmount = 0;
 
-/*
-    function buySeedSale(uint256 amount) public payable onlyWhenSaleActive nonReentrant {
-    //function buySeedSale(uint256 amount) public payable onlyWhenSeedSaleActive nonReentrant {
-        //require(rate == 1, "Rate should be 0.1 USD per token");
-        require(msg.value == amount * seedSale.rate, "Insufficient amount");
-        //require(amount <= totalSeedSaleBalances[address(this)], "Not enough tokens available for seed sale");
-        require(amount <= seedSale.tokens, "Not enough tokens available for seed sale");
-        //uint256 initialAllocation = (amount * 4) / 100; // Calculate the initial allocation (4% of the bought amount)
-        //seedSale.vestedTokens += (amount - initialAllocation); // Update the vested balance for the buyer
-        uint256 tokensSent = (amount * seedSale.initialAllocation); // Seed Sale initial tokens sent
-        seedSale.sold += amount;                                 // Update the total sold amount
-        seedSale.tokens -= amount;                               // Update available seed sale total balances
-        seedSale.initialAllocation -= tokensSent;                // Update available seed sale initial balances
-        totalSeedSaleBalances[msg.sender] += amount;             // Update buyer's total seed sale balances
-        totalSeedSaleBalances[address(this)] -= amount;          // Update available seed sale balances in contract
-        _transfer(address(this), msg.sender, tokensSent);        // Transfer the initial allocation to the buyer
-        emit TokensBought(msg.sender, amount);                   // Emit the TokensBought event
+        // Iterate over each sale type
+        for (uint i = 0; i < 3; i++) {
+            SaleType saleType = SaleType(i);
+            Sale storage sale = sales[saleType];
+
+        // Skip the sale if it's not active or no vested tokens
+        if (sale.vestedTokens == 0) continue;
+            require(block.timestamp > lastWithdrawal[msg.sender] + TOKENS_RELEASE, "Not yet time to release next batch of tokens");
+            //require(sale.vestedTokens[msg.sender] > 0, "No tokens available in vesting");
+            uint256 amount = (totalSaleBalances[uint(saleType)][msg.sender] - initialSaleBalances[uint(saleType)][msg.sender]) / 48;
+            sale.vestedTokens -= amount; // Update the total vested tokens for the sale
+            totalVestedBalances[uint(saleType)][address(this)] -= amount;
+            totalAmount += amount;
         }
 
-    function buyPrivateSale(uint256 amount) public payable onlyWhenPrivateSaleActive nonReentrant {
-        //require(rate == 1, "Rate should be 0.1 USD per token");
-        require(msg.value == amount * privateSale.rate, "Insufficient amount");
-        require(amount <= privateSale.tokens, "Not enough tokens available for private sale");
-        uint256 tokensSent = (amount * privateSale.initialAllocation) / privateSale.tokens; //Private Sale initial tokens sent
-        privateSale.sold += amount;                                 // Update the total sold amount
-        privateSale.tokens -= amount;                               // Update available private sale total balances
-        privateSale.initialAllocation -= tokensSent;                // Update available private sale initial balances
-        totalPrivateSaleBalances[msg.sender] += amount;             // Update the balances
-        totalPrivateSaleBalances[address(this)] -= amount;          // Update the balances
-        _transfer(address(this), msg.sender, tokensSent);           // Transfer the initial allocation to the buyer
-        emit TokensBought(msg.sender, amount);                      // Emit the TokensBought event
+        require(totalAmount > 0, "No tokens to withdraw");
+        _transfer(address(this), msg.sender, totalAmount); // Transfer the total tokens from the contract to the user
+        lastWithdrawal[msg.sender] = block.timestamp;
+        emit TokensWithdrawn(msg.sender, totalAmount);
     }
-    
-    function buyPublicSale(uint256 amount) public payable onlyWhenPublicSaleActive nonReentrant {
-        //require(rate == 5, "Rate should be 0.5 USD per token");
-        require(msg.value == amount * publicSale.rate, "Insufficient amount");
-        require(amount <= publicSale.tokens, "Not enough tokens available for public sale");
-        uint256 tokensSent = (amount * publicSale.initialAllocation) / publicSale.tokens; //Public Sale initial tokens sent
-        publicSale.sold += amount;                                  // Update the total sold amount
-        publicSale.tokens -= amount;                                // Update available public sale total balances
-        publicSale.initialAllocation -= tokensSent;                 // Update available public sale initial balances
-        totalPublicSaleBalances[msg.sender] += amount;              // Update the balances
-        totalPublicSaleBalances[address(this)] -= amount;           // Update the balances
-        _transfer(address(this), msg.sender, tokensSent);           // Transfer the initial allocation to the buyer
-        emit TokensBought(msg.sender, amount);                      // Emit the TokensBought event
+
+    function withdrawOtherVestedTokens() public onlyOwner nonReentrant {
+        uint256 totalAmount = 0;
+
+        // Iterate over each sale type
+        for (uint i = 0; i < 5; i++) {
+            OtherAllocationType otherAllocationType = OtherAllocationType(i);
+            OtherAllocation storage otherAllocation = distribution[otherAllocationType];
+
+        // Skip the sale if it's not active or no vested tokens
+        if (otherAllocation.vestedTokens == 0) continue;
+            require(block.timestamp > lastWithdrawal[address(this)] + TOKENS_RELEASE, "Not yet time to release next batch of tokens");
+            uint256 amount = (otherAllocation.monthlyRelease);
+            otherAllocationBalances[uint(otherAllocationType)][address(this)] -= amount; // Update the vested sale balances
+            otherAllocation.vestedTokens -= amount; // Update the total vested tokens for the sale
+            totalAmount += amount;
+        }
+
+        require(totalAmount > 0, "No tokens to withdraw");
+        _transfer(address(this), msg.sender, totalAmount); // Transfer the total tokens from the contract to the user
+        lastWithdrawal[msg.sender] = block.timestamp;
+        emit TokensWithdrawn(address(this), totalAmount);
     }
-*/
 }
