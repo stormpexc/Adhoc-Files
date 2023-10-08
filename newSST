@@ -6,7 +6,8 @@ Telegram: https://t.me/securestash
 Twitter : https://twitter.com/SecureStash
 Github  : https://github.com/SecureStash/
     
-Estimated price for token sale. This is subject to change based on BNB price at the time of execution.
+Token Sale Price Estimation:
+ * The given prices may vary depending on the BNB price when the transaction occurs.
     EarlyBird   : 1 BNB = 8000 SST tokens
     Private Sale: 1 BNB = 400 SST tokens
     Public Sale : 1 BNB = 250 SST tokens
@@ -15,27 +16,28 @@ Tokenomics:-
     
     Max Supply  : 100,000,000 SST tokens
     
-    Early Bird (2.5%)          :  2,500,000 SST tokens 
-    Private Sale (17.5%)       : 17,500,000 SST tokens 
-    Public Sale (10%)          : 10,000,000 SST tokens 
-    Volatile Control (50%)     : 50,000,000 SST tokens. Tokens allocated to CLVT contract to stabilize the price pegged to fiat currency and remain low volatile (nearly stable).
-    Exchange Listing (10%)     : 10,000,000 SST tokens 
-    Ecosystem Development (5%) :  5,000,000 SST tokens 
-    Team (4%)                  :  4,000,000 SST tokens 
-    Reserves (1%)              :  1,000,000 SST tokens 
+    Early Bird (2.5%)          :  2,500,000 SST tokens
+    Private Sale (17.5%)       : 17,500,000 SST tokens
+    Public Sale (10%)          : 10,000,000 SST tokens
+    Volatile Control (50%)     : 50,000,000 SST tokens. These tokens are allocated to the CLVT contract to ensure price stability, closely mirroring fiat currency.
+    Exchange Listing (10%)     : 10,000,000 SST tokens
+    Ecosystem Development (5%) :  5,000,000 SST tokens
+    Team (4%)                  :  4,000,000 SST tokens
+    Reserves (1%)              :  1,000,000 SST tokens
 
  * All tokens are unlocked 4% at Token Generation Event, followed by monthly vesting over 48 months.
- * 30M SST tokens allocated for sale remain unvested at Token Generation Event.
- * Tokens once sold follows the vesting schedule
- * Unsold tokens will be available in contract and will be  offered at a variable price in subsequent Private Sale (like OTC), which follows the same vesting schedule.
- * Volatile Control Tokens once deployed to CLVT protocol can be accessed only through governance.
- * Ecosystem Development tokens will be allocated to multisig wallet.
- * Reserve tokens will be sold periodically and converted to other decentralized asset to act as reserve funds.
+ * 30M SST tokens set aside for sales will not be vested during the Token Generation Event.
+ * Tokens once sold will adhere to the vesting schedule.
+ * Unsold tokens will be available in contract and will be offered at a variable price in subsequent Private Sale (similar to OTC) and will follow the same vesting plan.
+ * Tokens assigned for Volatile Control and sent to the CLVT protocol can only be accessed via governance.
+ * Tokens for Ecosystem Development will be allocated to a multisig wallet.
+ * Reserve tokens will be sold periodically and converted into other decentralized assets to serve as backup funds.
 
-Other Important Information:
-1) DEX trades will have a maximum burn tax of 0.5%   // Owner will add DEX address to whitelist for enabling burn tax for the respective DEX
-2) Owner can mint new tokens not exceeding maximum supply (100M). Minted tokens are sent directly by contract to ecosystem development wallet.
-3) Owner can modify wallet address allocated for tokens excluding sale.
+ Key Points:
+ 1) Trades on DEX will incur a maximum burn tax of 0.5%. Owner will whitelist the DEX address to activate this burn tax for the specific DEX.
+ 2) Owner can create new tokens, but the total cannot exceed 100M Total Supply. Any new tokens minted will be directly sent by the contract to the ecosystem development wallet.
+ 3) Owner can change the wallet addresses for token allocations (Volatile Control, Exchange Listing, Ecosystem Development, Team, Reserve).
+ 4) Owner can allocate additional tokens for sale without exceeding supply or stop an inprogress sale.
 
 */
 
@@ -49,10 +51,8 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
     uint256 public totalMint;
     uint256 public totalBurn;
     uint256 public totalVested;
-    uint256 public otherInitialAllocation;
     address public deadWallet;
     uint256 public launchTime;
-    uint256 public otherVestingTokensReleased;
     uint256 public totalTokensAllocatedForSales;
     uint256 public constant MAX_SUPPLY = 100000000;  // * 10 ** 18; // 100M tokens with 18 decimals
     uint256 public TAX_RATE = 5;                                    // 0.5% tax applied only on DEX trades
@@ -62,13 +62,14 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
     uint256 public constant INITIAL_RELEASE_PERCENTAGE = 4;
     uint256 public constant VESTING_PERCENTAGE = 96;
     
+    uint256 internal constant combinedSalePercentage = 30;          // 30% of the total supply (Early Bird + Private + Public)
     uint256 internal constant volatileControlPercentage = 50;       // 50% of the total supply
     uint256 internal constant exchangeListingPercentage = 10;       // 10% of the total supply
     uint256 internal constant ecosystemDevelopmentPercentage = 5;   // 5% of the total supply
     uint256 internal constant teamPercentage = 4;                   // 4% of the total supply
     uint256 internal constant reservesPercentage = 1;               // 1% of the total supply
     address[5] public fundAllocationAddressesArray;                 // Array to store fund allocation addresses
-    bool public paused = false;                                     // State variable to track if sales are paused
+    //bool public paused = false;                                     // State variable to track if sales are paused
 
     enum SaleType { EarlyBird, Private, Public }
     enum AllocationType { VolatileControl, ExchangeListing, EcosystemDevelopment, Team, Reserve }
@@ -78,7 +79,6 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
         uint256 tokensAvailable;
         uint256 rate;
         bool isActive;
-        bool wasActivated;
     }
  
     struct SaleData {
@@ -105,6 +105,8 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
     mapping(uint => mapping(address => SaleData)) public saleData;
     mapping(AllocationType => uint256) public tokensAllocated;
     mapping(AllocationType => bool) public initialDistributionDone;
+    mapping(address => uint256) private _balances;
+    
     
     event TokensBought(address indexed buyer, uint256 amount);
     event TokensMinted(address indexed to, uint256 amount);
@@ -114,8 +116,6 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
     event TokenVested(address indexed beneficiary, uint256 amount, AllocationType allocationType, uint256 timestamp);
     event SaleRateUpdated(SaleType saleType, uint256 newRate);
     event SaleActivated(SaleType saleType, uint256 timestamp);
-    event SalePaused(SaleType saleType);
-    event SaleResumed(SaleType saleType, uint256 newRate);
     event SaleStopped(SaleType saleType);
 
     constructor() ERC20("Secure Stash", "SST") {
@@ -138,6 +138,7 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
                     + (totalSupply() * teamPercentage / 100 * VESTING_PERCENTAGE) / 100
                     + (totalSupply() * reservesPercentage / 100 * VESTING_PERCENTAGE) / 100;
         
+        totalTokensAllocatedForSales =  (totalSupply() * combinedSalePercentage) / 100;
         circulatingSupply = totalMint - totalBurn - totalVested;
     }
 
@@ -147,25 +148,10 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
         _;
     }
 
-    // Modifier to check if sales are paused
-    modifier whenNotPaused() {
-        require(!paused, "Sales are paused");
-        _;
-    }
-
     //Modifier to check if users are eligible to participate in EarlyBird or private sale
     modifier onlyWhitelisted() {
         require(isWhitelisted[msg.sender], "Address not whitelisted");
         _;
-    }
-
-    // Function to allow the owner to deposit tokens into the contract for sales
-    function depositTokensForSales(uint256 amount) external onlyOwner {
-        require(amount > 0, "Amount should be greater than 0");
-        require(balanceOf(msg.sender) >= amount, "Insufficient balance");
-        
-        _transfer(msg.sender, address(this), amount); // Transfer tokens from the owner to the contract
-        totalTokensAllocatedForSales += amount; // Update the total tokens allocated for sales
     }
     
     // Function to activate a sale
@@ -178,14 +164,12 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
         sale.rate = rate;
         sale.tokensAvailable = tokensForSale;  // Update the tokens available for the sale
         sale.isActive = true;
-        sale.wasActivated = true;
-
         totalTokensAllocatedForSales -= tokensForSale; // Deduct the tokens allocated for this sale
 
         emit SaleActivated(saleType, block.timestamp);
     }
-
-    // Function to pause a sale
+/*
+        // Function to pause a sale
     function pauseSale(SaleType saleType) external onlyOwner {
         require(sales[saleType].isActive, "Sale is not active");
         sales[saleType].isActive = false;
@@ -194,21 +178,21 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
 
     // Function to resume a sale with an option to set a new rate
     function resumeSale(SaleType saleType, uint256 newRate) external onlyOwner {
-        require(sales[saleType].wasActivated, "Sale was never activated");
+        require(sales[saleType].wasActived, "Sale was never activated");
         require(!sales[saleType].isActive, "Sale is already active");
         sales[saleType].rate = newRate;  // Update the sale rate with the new rate
         sales[saleType].isActive = true;
         emit SaleResumed(saleType, newRate);
     }
-
-        // Function to stop a sale
+*/
     function stopSale(SaleType saleType) external onlyOwner {
-        require(sales[saleType].isActive, "Sale is not active");
-        require(totalTokensAllocatedForSales > 0, "Sale Completed");
-        sales[saleType].isActive = false;
-        totalTokensAllocatedForSales = 0;
+        require(sales[saleType].isActive, "Sale is still active");
+        totalTokensAllocatedForSales += sales[saleType].tokensAvailable;
+        require(totalTokensAllocatedForSales > 0, "No unsold tokens available");
+        sales[saleType].tokensAvailable = 0; // Reset tokens available for the sale
         emit SaleStopped(saleType);
     }
+
 
     //Function to whitelist users to participate in EarlyBird or private sale
     function addToWhitelist(address _address) external onlyOwner {
@@ -315,15 +299,14 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
 
     function buySale(SaleType saleType, uint256 amount) public payable onlyWhenSaleActive(saleType) nonReentrant {
         require(msg.value > 0, "Amount should be greater than 0");
-        require(amount == msg.value * sales[saleType].rate, "Incorrect amount sent");
-        
         SaleType currentSaleType = saleType;    // Set currentSaleType as a local variable
+        require(amount == msg.value * sales[currentSaleType].rate, "Incorrect amount sent");        
 
         if (currentSaleType == SaleType.EarlyBird || currentSaleType == SaleType.Private) {
             require(isWhitelisted[msg.sender], "Only whitelisted addresses can participate in this sale");
         }
 
-        Sale storage sale = sales[currentSaleType];                                // Access the sale from the mapping based on SaleType
+        Sale storage sale = sales[currentSaleType];                               // Access the sale from the mapping based on SaleType
         require(amount <= sale.tokensAvailable, "Not enough tokens available for sale");
         
         uint256 initialAllocation = (amount * INITIAL_RELEASE_PERCENTAGE) / 100;  // Initial sale tokens sent
@@ -366,7 +349,7 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
             require(totalAmount <= totalVested, "Not enough tokens available to withdraw");
             require(amount <= userSale.vestedTokens, "Not enough vested tokens available in user balances");
             
-            userSale.vestedTokens -= amount;                              // Update the user's vested tokens post vesting release
+            userSale.vestedTokens -= amount;                                     // Update the user's vested tokens post vesting release
             vestedSaleTokens[uint(currentSaleType)][msg.sender] -= amount;       // Update the remaining balances of user's sale tokens post vesting release
             totalVestedBalances[uint(currentSaleType)][address(this)] -= amount; // Update the remaining balances in contract for sale tokens post vesting release
         }
@@ -415,32 +398,20 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
         emit TokensWithdrawn(address(this), totalAmount);
     }
 
-    function viewSaleVestedTokens(address user) public view returns (uint256 Tokens_Vested) {
-        uint256 totalPending = 0;
-        uint256 currentTime = block.timestamp;
-        uint256 periodsSinceLaunch = (currentTime - launchTime) / TOKENS_RELEASE;  // No. of months since the contract launch time
-
-        // Calculate the vested tokens for each sale (EarlyBird, Private, Public)
-        for (uint i = 0; i < 3; i++) {
-            SaleType saleType = SaleType(i);
-            SaleData storage userSale = saleData[uint(saleType)][user];
-
-            uint256 periodsSinceLastWithdrawal = (currentTime - lastWithdrawal[user]) / TOKENS_RELEASE; // No. of months since the last withdrawal
-
-            // Skip to the next iteration if no period has passed since the user's last withdrawal or if there are no vested tokens for this sale type.
-            if (periodsSinceLastWithdrawal == 0 || userSale.vestedTokens == 0) continue;
-                uint256 totalAmountToBeReleased = userSale.monthlyRelease * periodsSinceLaunch;
-                uint256 amount = totalAmountToBeReleased - (totalAmountToBeReleased - userSale.vestedTokens);
-
-                // Uses the min helper function below to get the lesser of the two values
-                totalPending += min(amount, userSale.vestedTokens);
-            }
-        return totalPending;
-    }
-
-    // Helper function to get the minimum of two values
-    function min(uint256 a, uint256 b) internal pure returns (uint256) {
-        return a < b ? a : b;
+    //function getVestedBalances(address _user) public view returns (uint256 totalBalance) {
+    function getVestedBalances(address _user) public view returns (uint256 earlyBirdBalance, uint256 privateSaleBalance, uint256 publicSaleBalance, uint256 totalBalance) {
+       /* uint256 earlyBirdBalance = vestedSaleTokens[0][_user];
+        uint256 privateSaleBalance = vestedSaleTokens[1][_user];
+        uint256 publicSaleBalance = vestedSaleTokens[2][_user];
+*/
+        earlyBirdBalance = vestedSaleTokens[0][_user];
+        privateSaleBalance = vestedSaleTokens[1][_user];
+        publicSaleBalance = vestedSaleTokens[2][_user];
+        
+        totalBalance = earlyBirdBalance + privateSaleBalance + publicSaleBalance;
+        
+        return (earlyBirdBalance, privateSaleBalance, publicSaleBalance, totalBalance);
+        //return totalBalance;
     }
     
     function getSaleBalances() public view returns (uint256 EarlyBirdSold, uint256 PrivateSold, uint256 PublicSold, uint256 TotalSold) {
@@ -469,15 +440,15 @@ contract SecureStash is ERC20, Ownable, ReentrancyGuard {
             balanceOf(fundAllocationAddressesArray[uint(AllocationType.Team)]), 
             balanceOf(fundAllocationAddressesArray[uint(AllocationType.Reserve)]));
     }
+ 
+    function getTotalSupply() public view returns (uint256) {
+        return totalSupply();
+    }
 
     function getCirculatingSupply() public view returns (uint256) {
         return circulatingSupply;
     }
-    
-    function getTotalSupply() public view returns (uint256) {
-        return totalSupply();
-    }
-    
+  
     function getTotalBurns() public view returns (uint256) {
         return totalBurn;
     }
